@@ -157,6 +157,7 @@ function build(){
 }
 function total(b){return Object.values(b).reduce((a,v)=>a+v,0)}
 function paint(hit){
+  save();
   $("bal").textContent=balance;$("tot").textContent=total(bets);
   const n=$("net");n.textContent=(net>0?"+":"")+net;n.className=net>0?"pos":net<0?"neg":"";
   $("rnd").textContent=rounds;
@@ -399,7 +400,32 @@ function loop(now){
   rend.render(sc,cam);
 }
 
+/* ===== チップの保存(ブラウザのlocalStorage) ===== */
+const SAVE_KEY="sicbo-save-v1";
+// 置いただけで振っていないベットは、保存時にチップへ戻しておく
+function save(){
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({balance:balance+total(bets),net,rounds,chip,presetKey,history,last}))}catch(e){}
+}
+function renderHist(){
+  $("hist").innerHTML=history.length?history.map(x=>`<span class="h${x.trip?" t":""}">${x.d.join("-")} = ${x.s}</span>`).join(""):'<span class="note">まだありません</span>';
+}
+function load(){
+  try{
+    const s=JSON.parse(localStorage.getItem(SAVE_KEY)||"null");
+    if(!s||typeof s!=="object")return;
+    if(Number.isFinite(s.balance)&&s.balance>=0)balance=Math.floor(s.balance);
+    if(Number.isFinite(s.net))net=Math.floor(s.net);
+    if(Number.isFinite(s.rounds)&&s.rounds>=0)rounds=Math.floor(s.rounds);
+    if([10,50,100,500].includes(s.chip))chip=s.chip;
+    if(PRESETS[s.presetKey]){presetKey=s.presetKey;ODDS=PRESETS[presetKey]}
+    if(Array.isArray(s.history))history=s.history.filter(x=>x&&Array.isArray(x.d)&&x.d.length===3).slice(0,12);
+    if(s.last&&typeof s.last==="object")last=Object.fromEntries(Object.entries(s.last).filter(([k,v])=>Number.isFinite(v)&&v>0));
+    renderHist();
+  }catch(e){}
+}
+load();
 initDice();
+if(history[0])showDice(history[0].d);
 build();
 </script>
 </body>
