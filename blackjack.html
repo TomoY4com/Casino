@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Black Jack</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+.bjtable{background:radial-gradient(ellipse at 50% 0,#1f7a52,#114631);border-radius:14px;padding:16px;color:#fff;margin-bottom:14px;min-height:380px}
+.lbl{font-size:13px;opacity:.9;margin:6px 0}
+.cards{display:flex;flex-wrap:wrap;gap:6px;min-height:90px}
+.pc{width:60px;height:86px;background:#fff;color:#111;border-radius:8px;display:flex;flex-direction:column;justify-content:space-between;padding:6px 7px;font-weight:700;font-size:18px;line-height:1;box-shadow:0 3px 8px rgba(0,0,0,.4)}
+.pc.nw{animation:deal .35s ease-out}
+.pc.red{color:#c8372d}
+.pc .s{font-size:28px;align-self:center}
+.pc.back{background:repeating-linear-gradient(45deg,#8a1f1f 0 6px,#b32b2b 6px 12px);border:3px solid #fff}
+@keyframes deal{from{opacity:0;transform:translateY(-30px) scale(.9)}}
+.bjmsg{text-align:center;font-weight:700;min-height:28px;margin:12px 0;font-size:18px}
+.hands{display:flex;flex-wrap:wrap;gap:12px}
+.hand{border:2px solid transparent;border-radius:12px;padding:8px;background:rgba(0,0,0,.22)}
+.hand.act{border-color:#ffd84a}
+.hand .info{font-size:13px;margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
+.hand .res{font-weight:700;color:#ffd84a}
+@media (max-width:560px){.pc{width:50px;height:74px;font-size:15px}.pc .s{font-size:22px}}
+</style>
+</head>
+<body>
+<main>
+<nav class="nav"><a href="index.html">トップ</a><a href="sicbo.html">🎲 シックボー</a><a href="blackjack.html" class="on">🃏 Black Jack</a></nav>
+<h1>🃏 Black Jack</h1>
+
+<div class="card top">
+  <div class="stat"><b id="bal">1000</b><span>所持チップ</span></div>
+  <div class="stat"><b id="tot">0</b><span>今回のベット</span></div>
+  <div class="stat"><b id="net">0</b><span>通算損益</span></div>
+  <div class="stat"><b id="rnd">0</b><span>ラウンド数</span></div>
+</div>
+
+  <div class="bjtable">
+    <div class="lbl">ディーラー <b id="dTot"></b></div>
+    <div class="cards" id="dCards"></div>
+    <div class="bjmsg" id="bjMsg">ベットしてディールを押してください。</div>
+    <div class="lbl">プレイヤー</div>
+    <div class="hands" id="pHands"></div>
+  </div>
+  <div class="card">
+    <div id="bjBetBox">
+      <h2>ベット額:<span id="bjBetAmt">0</span></h2>
+      <div class="chips" id="bjChips"><button class="chip" data-a="10">+10</button><button class="chip" data-a="50">+50</button><button class="chip" data-a="100">+100</button><button class="chip" data-a="500">+500</button></div>
+      <div class="btns"><button class="b primary" id="bjDeal">ディール</button><button class="b" id="bjClr">ベットをクリア</button><button class="b" id="bjSame">前回と同じ額</button><button class="b" id="bjReset">リセット</button></div>
+    </div>
+    <div id="bjActBox" hidden>
+      <div class="btns" style="margin-top:0"><button class="b primary" id="bjHit">ヒット</button><button class="b" id="bjStand">スタンド</button><button class="b" id="bjDbl">ダブル</button><button class="b" id="bjSplit">スプリット</button></div>
+    </div>
+  </div>
+  <div class="card"><details><summary>ルール</summary><ul>
+    <li>6デッキ。21を超えずにディーラーより21に近づければ勝ち(1:1)。</li>
+    <li>最初の2枚が21(Black Jack)は3:2。ディーラーもBlack Jackならプッシュ(賭け金が戻る)。</li>
+    <li>ディーラーは17以上になるまでヒットし、ソフト17を含むすべての17でスタンドします。</li>
+    <li>ダブル:最初の2枚のとき、同額を追加して1枚だけ引いて終了(スプリット後も可)。</li>
+    <li>スプリット:同じ数値の2枚(10・J・Q・Kは同じ扱い)を2手に分け、同額を追加。最大4手まで。Aのスプリットは各1枚だけ引いて終了し、再スプリットはできません。スプリット後の21はBlack Jackにならず1:1です。</li>
+    <li>ディーラーがBlack Jackのときは、ダブルやスプリットを選ぶ前に公開されます。インシュランスとサレンダーはありません。</li>
+    <li>チップはシックボーと共通です。</li>
+  </ul></details></div>
+</main>
+<script src="assets/wallet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let {balance,net,rounds}=Wallet.get();
+function paint(){
+  $("bal").textContent=balance;
+  $("tot").textContent=bj.phase==="bet"?bj.bet:bj.hands.reduce((a,h)=>a+h.bet,0);
+  const n=$("net");n.textContent=(net>0?"+":"")+net;n.className=net>0?"pos":net<0?"neg":"";
+  $("rnd").textContent=rounds;save();
+}
+// チップ・損益は共通の Wallet に、前回のベット額はこのゲーム専用のキーに保存
+const BJ_KEY="casino-blackjack-v1";
+function save(){
+  Wallet.set({balance:balance+bjHeld(),net,rounds});
+  try{localStorage.setItem(BJ_KEY,JSON.stringify({first:bj.first}))}catch(e){}
+}
+function resetAll(){
+  if(bj.lock||bj.phase!=="bet")return;
+  Wallet.reset();({balance,net,rounds}=Wallet.get());
+  bj.bet=0;bj.hands=[];bj.dealer=[];bj.hole=false;bj.first=0;
+  $("bjMsg").textContent="ベットしてディールを押してください。";paint();
+}
+/* ===== Black Jack(6デッキ / ディーラーは全ての17でスタンド / BJは3:2) ===== */
+const RANKS=["A","2","3","4","5","6","7","8","9","10","J","Q","K"],SUITS=["♠","♥","♦","♣"];
+const BJ_RULES={decks:6,bjPays:1.5,maxHands:4,reshuffleBelow:78}; // 配当や枚数はここで変更
+let bj={shoe:[],dealer:[],hands:[],cur:0,bet:0,first:0,phase:"bet",lock:false,hole:false};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function newShoe(){
+  const s=[];
+  for(let k=0;k<BJ_RULES.decks;k++)for(const su of SUITS)for(let r=0;r<13;r++)s.push({r,su,n:0});
+  for(let i=s.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[s[i],s[j]]=[s[j],s[i]]}
+  bj.shoe=s;
+}
+function draw(){if(!bj.shoe.length)newShoe();const c=bj.shoe.pop();c.n=1;return c}
+const cv=c=>c.r===0?11:Math.min(c.r+1,10);
+function tot(cs){let t=0,a=0;cs.forEach(c=>{t+=cv(c);if(c.r===0)a++});while(t>21&&a>0){t-=10;a--}return t}
+const bjCur=()=>bj.hands[bj.cur];
+// 勝負がついていない賭け金(保存時にチップへ戻す)
+function bjHeld(){return bj.phase==="bet"?bj.bet:bj.hands.reduce((a,h)=>a+h.bet,0)}
+function canDouble(){const h=bjCur();return !!h&&h.cards.length===2&&!h.aces&&balance>=h.bet}
+function canSplit(){const h=bjCur();return !!h&&h.cards.length===2&&!h.aces&&cv(h.cards[0])===cv(h.cards[1])&&bj.hands.length<BJ_RULES.maxHands&&balance>=h.bet}
+const cardHTML=c=>`<div class="pc${(c.su==="♥"||c.su==="♦")?" red":""}${c.n?" nw":""}"><span>${RANKS[c.r]}</span><span class="s">${c.su}</span></div>`;
+function bjRender(){
+  const d=bj.dealer;
+  $("dCards").innerHTML=d.map((c,i)=>(i===1&&!bj.hole)?'<div class="pc back"></div>':cardHTML(c)).join("");
+  $("dTot").textContent=d.length?(bj.hole?tot(d):cv(d[0])):"";
+  $("pHands").innerHTML=bj.hands.map((h,i)=>`<div class="hand${bj.phase==="play"&&i===bj.cur?" act":""}"><div class="cards">${h.cards.map(cardHTML).join("")}</div><div class="info"><span>合計 ${tot(h.cards)}</span><span>ベット ${h.bet}</span>${h.res?`<span class="res">${h.res}</span>`:""}</div></div>`).join("");
+  [...d,...bj.hands.flatMap(h=>h.cards)].forEach(c=>c.n=0);
+  bjUI();
+}
+function bjUI(){
+  const bet=bj.phase==="bet",play=bj.phase==="play"&&!bj.lock;
+  $("bjBetBox").hidden=!bet;$("bjActBox").hidden=bet;$("bjBetAmt").textContent=bj.bet;
+  document.querySelectorAll("#bjChips .chip").forEach(b=>b.disabled=bj.lock||balance<+b.dataset.a);
+  $("bjDeal").disabled=bj.lock||bj.bet<=0;$("bjClr").disabled=bj.lock||bj.bet<=0;
+  $("bjSame").disabled=bj.lock||!bj.first||balance+bj.bet<bj.first;
+  $("bjHit").disabled=!play;$("bjStand").disabled=!play;
+  $("bjDbl").disabled=!(play&&canDouble());$("bjSplit").disabled=!(play&&canSplit());
+}
+function bjFresh(){ // 前のラウンドの表示を片付ける
+  if(bj.hands.length&&bj.bet===0){bj.hands=[];bj.dealer=[];bj.hole=false;$("bjMsg").textContent="ベットしてディールを押してください。"}
+}
+function bjAdd(n){if(bj.phase!=="bet"||bj.lock||balance<n)return;bjFresh();balance-=n;bj.bet+=n;paint();bjRender()}
+function bjClr(){if(bj.phase!=="bet"||bj.lock)return;balance+=bj.bet;bj.bet=0;paint();bjRender()}
+function bjSame(){if(bj.phase!=="bet"||bj.lock)return;bjFresh();balance+=bj.bet;bj.bet=0;if(balance>=bj.first){balance-=bj.first;bj.bet=bj.first}paint();bjRender()}
+function reveal(){if(!bj.hole){bj.hole=true;if(bj.dealer[1])bj.dealer[1].n=1}}
+async function bjDeal(){
+  if(bj.phase!=="bet"||bj.lock||bj.bet<=0)return;
+  bj.lock=true;if(bj.shoe.length<BJ_RULES.reshuffleBelow)newShoe();
+  bj.first=bj.bet;bj.dealer=[];bj.hole=false;bj.cur=0;bj.phase="play";
+  const h={cards:[],bet:bj.bet,fromSplit:false,done:false};bj.hands=[h];
+  $("bjMsg").textContent="";paint();bjRender();
+  for(const t of [h.cards,bj.dealer,h.cards,bj.dealer]){await sleep(300);t.push(draw());bjRender()}
+  // ディーラーがBlack Jack、またはプレイヤーがBlack Jackならその場で決着
+  if(tot(bj.dealer)===21||tot(h.cards)===21){await sleep(400);reveal();bjRender();await sleep(700);bjSettle();return}
+  bj.lock=false;bjRender();
+}
+async function bjNext(){
+  while(bj.cur<bj.hands.length&&bj.hands[bj.cur].done)bj.cur++;
+  if(bj.cur>=bj.hands.length){await bjDealer();return}
+  bj.lock=false;bjRender();
+}
+async function bjHit(){
+  if(bj.phase!=="play"||bj.lock)return;bj.lock=true;
+  const h=bjCur();h.cards.push(draw());if(tot(h.cards)>=21)h.done=true;
+  bjRender();await sleep(450);await bjNext();
+}
+async function bjStand(){if(bj.phase!=="play"||bj.lock)return;bj.lock=true;bjCur().done=true;bjRender();await bjNext()}
+async function bjDouble(){
+  if(bj.phase!=="play"||bj.lock||!canDouble())return;bj.lock=true;
+  const h=bjCur();balance-=h.bet;h.bet*=2;h.cards.push(draw());h.done=true;
+  paint();bjRender();await sleep(600);await bjNext();
+}
+async function bjSplit(){
+  if(bj.phase!=="play"||bj.lock||!canSplit())return;bj.lock=true;
+  const h=bjCur();balance-=h.bet;
+  const h2={cards:[h.cards.pop()],bet:h.bet,fromSplit:true,done:false};h.fromSplit=true;
+  h.cards.push(draw());h2.cards.push(draw());
+  if(h.cards[0].r===0){h.aces=h2.aces=true;h.done=h2.done=true} // Aのスプリットは1枚ずつで終了
+  else{if(tot(h.cards)===21)h.done=true;if(tot(h2.cards)===21)h2.done=true}
+  bj.hands.splice(bj.cur+1,0,h2);
+  paint();bjRender();await sleep(600);await bjNext();
+}
+async function bjDealer(){
+  bj.phase="dealer";bj.lock=true;reveal();bjRender();await sleep(700);
+  if(bj.hands.some(h=>tot(h.cards)<=21)){ // 全員バーストなら引かない。17以上になるまでヒット
+    while(tot(bj.dealer)<17){bj.dealer.push(draw());bjRender();await sleep(700)}
+  }
+  bjSettle();
+}
+function bjSettle(){
+  reveal();
+  const d=bj.dealer,dt=tot(d),dBJ=d.length===2&&dt===21;
+  let ret=0,stake=0,won=0,nat=false;
+  bj.hands.forEach(h=>{
+    const pt=tot(h.cards),isBJ=h.cards.length===2&&pt===21&&!h.fromSplit;
+    let r=0,label="負け";
+    if(pt>21)label="バースト";
+    else if(isBJ){if(dBJ){r=h.bet;label="プッシュ"}else{r=h.bet*(1+BJ_RULES.bjPays);label="Black Jack";nat=true}}
+    else if(dBJ)label="負け";
+    else if(dt>21||pt>dt){r=h.bet*2;label="勝ち"}
+    else if(pt===dt){r=h.bet;label="プッシュ"}
+    h.res=label+(r>h.bet?" +"+(r-h.bet):r<h.bet?" -"+h.bet:"");
+    ret+=r;stake+=h.bet;if(r>h.bet)won+=r;
+  });
+  const diff=ret-stake;
+  balance+=ret;net+=diff;rounds++;
+  bj.phase="bet";bj.bet=0;bj.lock=false;
+  $("bjMsg").textContent=(nat?"Black Jack! ":"")+(diff>0?"勝ち +"+diff:diff<0?"負け "+diff:"引き分け ±0")+(balance===0?"(チップがなくなりました。リセットできます)":"");
+  paint();bjRender();
+  if(won>0)showPayout(won);
+}
+document.querySelectorAll("#bjChips .chip").forEach(b=>b.onclick=()=>bjAdd(+b.dataset.a));
+$("bjDeal").onclick=bjDeal;$("bjClr").onclick=bjClr;$("bjSame").onclick=bjSame;
+$("bjHit").onclick=bjHit;$("bjStand").onclick=bjStand;$("bjDbl").onclick=bjDouble;$("bjSplit").onclick=bjSplit;
+$("bjReset").onclick=()=>{resetAll();bjRender()};
+
+try{const s=JSON.parse(localStorage.getItem(BJ_KEY)||"null");if(s&&Number.isFinite(s.first)&&s.first>0)bj.first=Math.floor(s.first)}catch(e){}
+paint();bjRender();
+// 別タブ・別ページでチップが変わったら反映(ベット中は上書きしない)
+Wallet.on(s=>{if(bj.lock||bj.phase!=="bet"||bj.bet>0)return;balance=s.balance;net=s.net;rounds=s.rounds;paint();bjRender()});
+</script>
+</body>
+</html>

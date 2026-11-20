@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sicbo</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+.table{background:linear-gradient(#090d18,#141a2c);border:1px solid #2b3550;border-radius:14px;padding:16px;color:#fff;text-align:center}
+.dice{position:relative;height:clamp(250px,58vw,400px)}
+.dice canvas{width:100%;height:100%;display:block}
+.msg{min-height:48px;margin-top:10px;font-weight:700}
+.msg small{display:block;font-weight:400;opacity:.9}
+.grid{display:grid;gap:6px}
+.cell{position:relative;border:1px solid var(--line);background:var(--cell);color:var(--ink);border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;font-size:14px;min-height:50px}
+.cell small{display:block;color:var(--sub);font-size:11px}
+.cell.has{border-color:var(--gold);box-shadow:inset 0 0 0 1px var(--gold)}
+.cell.hit{background:var(--win);color:#fff}.cell.hit small{color:#fff}
+.amt{position:absolute;top:-7px;right:-4px;background:var(--gold);color:#111;font-size:11px;font-weight:700;border-radius:999px;padding:1px 7px}
+.g2{grid-template-columns:repeat(2,1fr)}.g4{grid-template-columns:repeat(4,1fr)}.g7{grid-template-columns:repeat(7,1fr)}.g6{grid-template-columns:repeat(6,1fr)}.g5{grid-template-columns:repeat(5,1fr)}
+.hist{display:flex;gap:6px;flex-wrap:wrap}
+.h{border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:13px;font-variant-numeric:tabular-nums}
+.h.t{border-color:var(--accent);color:var(--accent)}
+.sim{font-size:14px}.sim table{width:100%;border-collapse:collapse;margin-top:8px}.sim td{padding:4px 0;border-bottom:1px solid var(--line)}.sim td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+#preset{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:8px;font-size:13px;margin-left:auto}
+@media (max-width:560px){.g7{grid-template-columns:repeat(4,1fr)}.g6{grid-template-columns:repeat(3,1fr)}.g5{grid-template-columns:repeat(3,1fr)}.top{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<main>
+<nav class="nav"><a href="index.html">トップ</a><a href="sicbo.html" class="on">🎲 Sicbo</a><a href="blackjack.html">🃏 ブラックジャック</a></nav>
+<h1>🎲 Sicbo</h1>
+
+<div class="card top">
+  <div class="stat"><b id="bal">1000</b><span>所持チップ</span></div>
+  <div class="stat"><b id="tot">0</b><span>今回のベット</span></div>
+  <div class="stat"><b id="net">0</b><span>通算損益</span></div>
+  <div class="stat"><b id="rnd">0</b><span>ラウンド数</span></div>
+</div>
+
+<div class="table">
+  <div class="dice" id="dice" aria-label="サイコロ"></div>
+  <div class="msg" id="msg">チップを選んで、賭けたい場所をタップしてください。</div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="chips" id="chips"></div>
+  <div class="btns">
+    <button class="b primary" id="roll">サイコロを振る</button>
+    <button class="b" id="undo">1つ戻す</button>
+    <button class="b" id="clear">ベットをクリア</button>
+    <button class="b" id="again">前回と同じ賭け</button>
+    <button class="b" id="reset">リセット</button>
+  </div>
+</div>
+
+<div class="card" id="board"></div>
+
+<div class="card">
+  <h2>出目の履歴(新しい順)</h2>
+  <div class="hist" id="hist"><span class="note">まだありません</span></div>
+</div>
+
+<div class="card sim">
+  <h2>シミュレーション</h2>
+  <div class="note">現在のベットを同じ内容で1000ラウンド繰り返したらどうなるかを計算します(所持チップは変わりません)。</div>
+  <div class="btns"><button class="b" id="simBtn">1000回シミュレート</button></div>
+  <div id="simOut"></div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>ルールと配当</summary>
+    <ul id="rules"></ul>
+  </details>
+</div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="assets/wallet.js"></script>
+<script>
+
+const FACE=["","⚀","⚁","⚂","⚃","⚄","⚅"];
+/* ============ 配当設定(ここを編集するだけで画面表示・計算の両方に反映されます) ============
+   数値はすべて「N対1」のN(的中時に、賭け金に加えて受け取る利益の倍率)。
+   別のルールを足したいときは、PRESETS に同じ形で1行追加してください。 */
+const SUM_STANDARD={4:60,5:30,6:17,7:12,8:8,9:6,10:6,11:6,12:6,13:8,14:12,15:17,16:30,17:60};
+const PRESETS={
+  standard:{name:"標準(ゾロ目180・ペア10)",small:1,big:1,odd:1,even:1,single:[1,2,3],double:10,tripleSpecific:180,tripleAny:30,combo:5,sum:SUM_STANDARD},
+  type150:{name:"150倍タイプ(ゾロ目150・ペア8)",small:1,big:1,odd:1,even:1,single:[1,2,3],double:8,tripleSpecific:150,tripleAny:30,combo:5,sum:SUM_STANDARD}
+};
+let presetKey="standard",ODDS=PRESETS[presetKey];
+let {balance,net,rounds}=Wallet.get();
+let chip=10,bets={},last={},order=[],busy=false,history=[];
+const $=id=>document.getElementById(id);
+
+function label(k){
+  const [t,v]=k.split(":");
+  return {big:"大",small:"小",any:"どれかゾロ目"}[t]||(t==="sum"?"合計"+v:t==="num"?"数字"+v:t==="trip"?"ゾロ目"+v+v+v:t==="dbl"?"ペア"+v+v:"組合せ"+v.replace("-","・"));
+}
+function cell(k,main,sub){return `<button class="cell" data-k="${k}">${main}<small>${sub}</small></button>`}
+function build(){
+  let h='<h2>大・小・奇数・偶数</h2><div class="grid g4">'+cell("small:","小","4〜10 / "+ODDS.small+":1")+cell("big:","大","11〜17 / "+ODDS.big+":1")+cell("odd:","奇数",ODDS.odd+":1")+cell("even:","偶数",ODDS.even+":1")+'</div>';
+  h+='<h2>合計</h2><div class="grid g7">';
+  for(let s=4;s<=17;s++)h+=cell("sum:"+s,s,ODDS.sum[s]+":1");
+  h+='</div><h2>数字(出た個数だけ配当)</h2><div class="grid g6">';
+  for(let n=1;n<=6;n++)h+=cell("num:"+n,FACE[n],ODDS.single.join("/")+":1");
+  h+='</div><h2>ゾロ目</h2><div class="grid g7">';
+  for(let n=1;n<=6;n++)h+=cell("trip:"+n,FACE[n].repeat(3).slice(0,3),ODDS.tripleSpecific+":1");
+  h+=cell("any:","どれか",ODDS.tripleAny+":1")+'</div><h2>ペア</h2><div class="grid g6">';
+  for(let n=1;n<=6;n++)h+=cell("dbl:"+n,FACE[n]+FACE[n],ODDS.double+":1");
+  h+='</div><h2>2数の組合せ</h2><div class="grid g5">';
+  for(let a=1;a<=6;a++)for(let b=a+1;b<=6;b++)h+=cell("combo:"+a+"-"+b,FACE[a]+FACE[b],ODDS.combo+":1");
+  h+='</div>';
+  $("board").innerHTML=h;
+  $("board").querySelectorAll(".cell").forEach(c=>c.onclick=()=>place(c.dataset.k));
+  const ch=[10,50,100,500];
+  $("chips").innerHTML=ch.map(v=>`<button class="chip${v===chip?" on":""}" data-v="${v}">${v}</button>`).join("")+'<span class="note">← 1回に置くチップ</span><select id="preset" aria-label="配当ルール">'+Object.keys(PRESETS).map(k=>`<option value="${k}"${k===presetKey?" selected":""}>${PRESETS[k].name}</option>`).join("")+'</select>';
+  $("chips").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{chip=+c.dataset.v;build();paint()});
+  $("preset").onchange=e=>{if(busy){e.target.value=presetKey;return}presetKey=e.target.value;ODDS=PRESETS[presetKey];build()};
+  const O=ODDS,S=O.sum;
+  $("rules").innerHTML=[
+    `大(11〜17)・小(4〜10)・奇数・偶数:${O.big}:1。ゾロ目(3つ同じ)のときは負け。`,
+    `数字:選んだ数字が1個で${O.single[0]}:1、2個で${O.single[1]}:1、3個で${O.single[2]}:1。`,
+    `合計:`+Object.keys(S).map(k=>k+"="+S[k]+":1").join("、")+`。`,
+    `ゾロ目指定:${O.tripleSpecific}:1/どれかのゾロ目:${O.tripleAny}:1。`,
+    `ペア(指定した数字が2個以上):${O.double}:1。`,
+    `2数の組合せ:指定した2つの数字が両方出れば${O.combo}:1。`,
+    `「N:1」は、賭け金に加えて賭け金のN倍の利益を受け取る意味です(カジノの表記と同じ)。カジノによって一部の配当が異なるため、右上のメニューで切り替えられます。ゲーム内のチップに換金価値はありません。`
+  ].map(t=>`<li>${t}</li>`).join("");
+  paint();
+}
+function total(b){return Object.values(b).reduce((a,v)=>a+v,0)}
+function paint(hit){
+  save();
+  $("bal").textContent=balance;$("tot").textContent=total(bets);
+  const n=$("net");n.textContent=(net>0?"+":"")+net;n.className=net>0?"pos":net<0?"neg":"";
+  $("rnd").textContent=rounds;
+  document.querySelectorAll(".cell").forEach(c=>{
+    const k=c.dataset.k,v=bets[k];
+    c.classList.toggle("has",!!v);
+    c.classList.toggle("hit",!!(hit&&hit.has(k)));
+    let a=c.querySelector(".amt");
+    if(v){if(!a){a=document.createElement("span");a.className="amt";c.appendChild(a)}a.textContent=v}else if(a)a.remove();
+  });
+  $("roll").disabled=busy||total(bets)===0;
+  $("undo").disabled=busy||!order.length;
+  $("clear").disabled=busy||!order.length;
+  $("again").disabled=busy||!Object.keys(last).length;
+  $("simBtn").disabled=total(bets)===0;
+}
+function place(k,amt=chip){
+  if(busy)return;
+  if(balance<amt){$("msg").innerHTML="チップが足りません。";return}
+  balance-=amt;bets[k]=(bets[k]||0)+amt;order.push([k,amt]);paint();
+}
+function undo(){const o=order.pop();if(!o)return;balance+=o[1];bets[o[0]]-=o[1];if(bets[o[0]]<=0)delete bets[o[0]];paint()}
+function clearBets(){while(order.length)undo()}
+function again(){
+  clearBets();
+  const need=total(last);
+  if(need>balance){$("msg").innerHTML="前回と同じ額を賭けるにはチップが足りません。";return}
+  for(const k in last)place(k,last[k]);
+}
+// returns total returned to player (stake included) for a single bet
+function payout(k,stake,d){
+  const [t,v]=k.split(":"),s=d[0]+d[1]+d[2],trip=d[0]===d[1]&&d[1]===d[2];
+  const cnt=n=>d.filter(x=>x===n).length;
+  const m=x=>stake*(x+1); // 賭け金 + 利益(x倍)
+  if(t==="big")return !trip&&s>=11?m(ODDS.big):0;
+  if(t==="small")return !trip&&s<=10?m(ODDS.small):0;
+  if(t==="odd")return !trip&&s%2===1?m(ODDS.odd):0;
+  if(t==="even")return !trip&&s%2===0?m(ODDS.even):0;
+  if(t==="sum")return s===+v?m(ODDS.sum[v]):0;
+  if(t==="num")return cnt(+v)?m(ODDS.single[cnt(+v)-1]):0;
+  if(t==="trip")return trip&&d[0]===+v?m(ODDS.tripleSpecific):0;
+  if(t==="any")return trip?m(ODDS.tripleAny):0;
+  if(t==="dbl")return cnt(+v)>=2?m(ODDS.double):0;
+  if(t==="combo"){const [a,b]=v.split("-").map(Number);return cnt(a)&&cnt(b)?m(ODDS.combo):0}
+  return 0;
+}
+function hitKeys(d){
+  const out=new Set();
+  for(const k of allKeys())if(payout(k,1,d)>0)out.add(k);
+  return out;
+}
+function allKeys(){return [...document.querySelectorAll(".cell")].map(c=>c.dataset.k)}
+const rd=()=>1+Math.floor(Math.random()*6);
+function roll(){
+  if(busy||!total(bets))return;
+  busy=true;paint();$("msg").innerHTML="サイコロを振っています…";
+  const raw=[rd(),rd(),rd()];
+  throwDice(raw);
+  setTimeout(()=>{
+    const d=[...raw].sort((a,b)=>a-b);
+    let ret=0;for(const k in bets)ret+=payout(k,bets[k],d);
+    const stake=total(bets),diff=ret-stake,s=d[0]+d[1]+d[2],trip=d[0]===d[1]&&d[1]===d[2];
+    balance+=ret;net+=diff;rounds++;last={...bets};
+    history.unshift({d,s,trip});history=history.slice(0,12);
+    const h=hitKeys(d);
+    bets={};order=[];busy=false;
+    $("msg").innerHTML=`合計 ${s}${trip?"(ゾロ目!)":""}<small class="${diff>0?"":""}">${diff>0?"勝ち +"+diff:diff<0?"負け "+diff:"引き分け ±0"}</small>`;
+    $("hist").innerHTML=history.map(x=>`<span class="h${x.trip?" t":""}">${x.d.join("-")} = ${x.s}</span>`).join("");
+    paint(h);
+    if(ret>0)showPayout(ret);
+    if(balance===0)$("msg").innerHTML+='<small>チップがなくなりました。「リセット」でやり直せます。</small>';
+  },2500);
+}
+function resetAll(){
+  if(busy)return;
+  Wallet.reset();({balance,net,rounds}=Wallet.get());bets={};last={};order=[];history=[];
+  $("hist").innerHTML='<span class="note">まだありません</span>';
+  showDice([1,1,1],false);
+  $("msg").innerHTML="チップを選んで、賭けたい場所をタップしてください。";
+  $("simOut").innerHTML="";paint();
+}
+function simulate(){
+  const N=1000;let spent=0,back=0,wins=0,best=-1e9,worst=1e9,run=0;
+  const b={...bets},st=total(b);
+  for(let i=0;i<N;i++){
+    const d=[rd(),rd(),rd()];let r=0;
+    for(const k in b)r+=payout(k,b[k],d);
+    spent+=st;back+=r;if(r>st)wins++;
+    run+=r-st;best=Math.max(best,run);worst=Math.min(worst,run);
+  }
+  const p=back-spent,rtp=(back/spent*100).toFixed(1);
+  const cls=p>=0?"pos":"neg";
+  $("simOut").innerHTML=`<table>
+  <tr><td>1ラウンドの賭け金</td><td>${st}</td></tr>
+  <tr><td>1000回の損益</td><td class="${cls}">${p>0?"+":""}${p}</td></tr>
+  <tr><td>還元率</td><td>${rtp}%</td></tr>
+  <tr><td>勝率</td><td>${(wins/N*100).toFixed(1)}%</td></tr>
+  <tr><td>途中の最高/最低損益</td><td>${best} / ${worst}</td></tr></table>
+  <div class="note">乱数なので毎回結果が変わります。賭け方ごとの理論上の還元率は約81〜97%で、回数が多いほどそこに近づきます。</div>`;
+}
+$("roll").onclick=roll;$("undo").onclick=undo;$("clear").onclick=clearBets;
+$("again").onclick=again;$("reset").onclick=resetAll;$("simBtn").onclick=simulate;
+
+/* ===== 3Dサイコロ(three.js)===== */
+const HAS3D=typeof THREE!=="undefined";
+// 寸法: DS=サイコロ, TR=筒の半径, TH=筒の高さ, TGAP=筒の間隔, TLIM=筒内での横の遊び, GRAV=重力
+const DS=1.1,TR=1.25,TH=6.4,TGAP=3.1,TLIM=.3,GRAV=24;
+const FACE_OF=[3,4,2,5,1,6]; // BoxGeometryの面順(+x,-x,+y,-y,+z,-z)に貼る目(対面の和は7)
+const NORMAL={3:[1,0,0],4:[-1,0,0],2:[0,1,0],5:[0,-1,0],1:[0,0,1],6:[0,0,-1]};
+const PIPS={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
+let sc,cam,rend,mats,ledOn,ledOff,ledRed,_m,_qd,_qo,tick=0,rolling=0;
+const dice=[],lights=[],floors=[],leds=[],flash=[0,0,0];
+function faceTex(n){
+  const c=document.createElement("canvas");c.width=c.height=128;const g=c.getContext("2d");
+  const gr=g.createLinearGradient(0,0,128,128);gr.addColorStop(0,"#fff");gr.addColorStop(1,"#e2ddcf");
+  g.fillStyle=gr;g.fillRect(0,0,128,128);
+  g.strokeStyle="rgba(0,0,0,.25)";g.lineWidth=10;g.strokeRect(0,0,128,128);
+  const pos=[28,64,100];
+  PIPS[n].forEach(i=>{
+    g.beginPath();g.arc(pos[i%3],pos[(i/3)|0],n===1?21:11,0,Math.PI*2);
+    g.fillStyle=n===1?"#c8372d":"#151515";g.fill();
+  });
+  return new THREE.CanvasTexture(c);
+}
+// 指定の目が真上(+y)を向く姿勢。yawは水平面内の向き
+function target(v,yaw){
+  const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(...NORMAL[v]),new THREE.Vector3(0,1,0));
+  return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),yaw).multiply(q);
+}
+// 姿勢qのときの、床から中心までの高さ(床にぴったり接する)
+function ext(q){_m.makeRotationFromQuaternion(q);const e=_m.elements;return DS/2*(Math.abs(e[1])+Math.abs(e[5])+Math.abs(e[9]))}
+function initDice(){
+  const box=$("dice");
+  if(!HAS3D){box.innerHTML='<p class="note" style="padding:24px;color:#fff">3D表示を読み込めませんでした。</p>';return}
+  _m=new THREE.Matrix4();_qd=new THREE.Quaternion();_qo=new THREE.Quaternion();
+  rend=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  rend.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  box.appendChild(rend.domElement);
+  sc=new THREE.Scene();cam=new THREE.PerspectiveCamera(32,1,.1,100);
+  sc.add(new THREE.AmbientLight(0xffffff,.75));
+  const dl=new THREE.DirectionalLight(0xffffff,.8);dl.position.set(4,10,8);sc.add(dl);
+  ledOn=new THREE.MeshBasicMaterial({color:0x46ff86});ledOff=new THREE.MeshBasicMaterial({color:0x143d24});ledRed=new THREE.MeshBasicMaterial({color:0xff7a3c});
+  const glass=new THREE.MeshPhongMaterial({color:0xbfe8ff,transparent:true,opacity:.14,side:THREE.DoubleSide,depthWrite:false,shininess:120,specular:0xffffff});
+  const baseM=new THREE.MeshPhongMaterial({color:0x1a1f2e});
+  mats=FACE_OF.map(n=>new THREE.MeshPhongMaterial({map:faceTex(n),shininess:40,specular:0x333333}));
+  const geo=new THREE.BoxGeometry(DS,DS,DS),ledGeo=new THREE.BoxGeometry(.14,.26,.14);
+  for(let i=0;i<3;i++){
+    const cx=(i-1)*TGAP;
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(TR+.15,TR+.25,.5,32),baseM);base.position.set(cx,-.25,0);sc.add(base);
+    const fl=new THREE.Mesh(new THREE.CircleGeometry(TR,32),new THREE.MeshBasicMaterial({color:0xffffff}));
+    fl.rotation.x=-Math.PI/2;fl.position.set(cx,.01,0);sc.add(fl);floors.push(fl);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(TR,.06,8,32),baseM);ring.rotation.x=Math.PI/2;ring.position.set(cx,TH,0);sc.add(ring);
+    const pl=new THREE.PointLight(0xffffff,.5,6);pl.position.set(cx,.9,0);sc.add(pl);lights.push(pl);
+    [-1,1].forEach(sd=>{for(let k=0;k<14;k++){const m=new THREE.Mesh(ledGeo,ledOff);m.position.set(cx+sd*(TR+.3),.5+k*.42,0);sc.add(m);leds.push({m,k})}});
+    const mesh=new THREE.Mesh(geo,mats);sc.add(mesh);
+    dice.push({mesh,cx,s:null});
+    const tube=new THREE.Mesh(new THREE.CylinderGeometry(TR,TR,TH,40,1,true),glass);
+    tube.position.set(cx,TH/2,0);tube.renderOrder=2;sc.add(tube); // ガラスは最後に描画
+  }
+  showDice([1,1,1]);
+  fit();
+  if(window.ResizeObserver)new ResizeObserver(fit).observe(box);
+  requestAnimationFrame(loop);
+}
+function fit(){
+  const box=$("dice"),w=box.clientWidth||600,h=box.clientHeight||300;
+  rend.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();
+  const vh=Math.tan(cam.fov*Math.PI/360),dist=Math.max(3.9/vh,5.4/(vh*cam.aspect))*1.08,el=.5;
+  cam.position.set(0,2.9+Math.sin(el)*dist,Math.cos(el)*dist);cam.lookAt(0,2.9,0);
+}
+// 静止表示(vの目を上にして床に置く)
+function showDice(v){
+  if(!HAS3D)return;
+  dice.forEach((d,i)=>{
+    d.s=null;const q=target(v[i],(i-1)*.25);
+    d.mesh.visible=true;d.mesh.quaternion.copy(q);d.mesh.position.set(d.cx,ext(q),0);
+  });
+}
+function throwDice(vals){
+  if(!HAS3D)return;
+  const r=()=>Math.random()-.5;
+  dice.forEach((d,i)=>{
+    d.s={t:-i*.22,b:TH+.6,vy:0,x:r()*.3,z:r()*.3,vx:r()*3,vz:r()*3,
+      axis:new THREE.Vector3(r(),r(),r()).normalize(),w:9+Math.random()*5,
+      q:new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random()*6,Math.random()*6,Math.random()*6)),
+      qt:target(vals[i],r()*.9),fx:r()*.25,fz:r()*.25,land:-1,bounce:0,settled:false,done:false};
+    d.mesh.visible=false;
+  });
+  rolling=dice.length;
+}
+function stepDie(d,i,dt){
+  const s=d.s;if(!s||s.done)return;
+  s.t+=dt;if(s.t<0)return;
+  d.mesh.visible=true;
+  if(!s.settled){
+    s.vy-=GRAV*dt;s.b+=s.vy*dt;
+    s.x+=s.vx*dt;s.z+=s.vz*dt;
+    if(Math.abs(s.x)>TLIM){s.x=Math.sign(s.x)*TLIM;s.vx*=-.8}
+    if(Math.abs(s.z)>TLIM){s.z=Math.sign(s.z)*TLIM;s.vz*=-.8}
+    if(s.b<=0&&s.vy<0){
+      if(s.land<0)s.land=s.t;
+      s.bounce++;flash[i]=Math.max(flash[i],s.bounce===1?1:.5);
+      s.b=0;s.vy=-s.vy*.42;
+      if(s.vy<1.4){s.vy=0;s.settled=true}
+    }
+    const decay=s.land<0?1:Math.max(0,1-(s.t-s.land)/.9);
+    _qd.setFromAxisAngle(s.axis,s.w*dt*decay);s.q.premultiply(_qd);
+  }
+  // 着地後は回転しながら目標姿勢(指定の目が真上・水平)へ滑らかに寄せる
+  let p=s.land<0?0:Math.min(1,(s.t-s.land)/.9);p=p*p*(3-2*p);
+  _qo.copy(s.q).slerp(s.qt,p);
+  d.mesh.quaternion.copy(_qo);
+  d.mesh.position.set(d.cx+s.x*(1-p)+s.fx*p,ext(_qo)+s.b,s.z*(1-p)+s.fz*p);
+  if(s.settled&&p>=1){s.done=true;rolling--;d.mesh.quaternion.copy(s.qt);d.mesh.position.set(d.cx+s.fx,ext(s.qt),s.fz)}
+}
+let lastT=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-(lastT||now))/1000,.05);lastT=now;tick+=dt;
+  dice.forEach((d,i)=>stepDie(d,i,dt));
+  leds.forEach(l=>{
+    const on=rolling>0?((Math.floor(tick*20)+l.k)%3===0):(((Math.floor(tick*8)-l.k)%3+3)%3===0);
+    l.m.material=on?(rolling>0?ledRed:ledOn):ledOff;
+  });
+  lights.forEach((p,i)=>{flash[i]*=Math.pow(.02,dt);p.intensity=.5+flash[i]*2.2});
+  floors.forEach((f,i)=>f.material.color.setScalar(.8+.2*Math.min(flash[i],1)));
+  rend.render(sc,cam);
+}
+
+/* ===== 保存 =====
+   チップ・損益・ラウンド数は全ゲーム共通の Wallet(assets/wallet.js)に、
+   このゲーム固有の設定は localStorage の casino-sicbo-v1 に保存します。 */
+const SAVE_KEY="casino-sicbo-v1";
+// 置いただけで振っていないベットは、保存時にチップへ戻しておく
+function save(){
+  Wallet.set({balance:balance+total(bets),net,rounds});
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({chip,presetKey,history,last}))}catch(e){}
+}
+function renderHist(){
+  $("hist").innerHTML=history.length?history.map(x=>`<span class="h${x.trip?" t":""}">${x.d.join("-")} = ${x.s}</span>`).join(""):'<span class="note">まだありません</span>';
+}
+function load(){
+  try{
+    const s=JSON.parse(localStorage.getItem(SAVE_KEY)||"null");
+    if(!s||typeof s!=="object")return;
+    if([10,50,100,500].includes(s.chip))chip=s.chip;
+    if(PRESETS[s.presetKey]){presetKey=s.presetKey;ODDS=PRESETS[presetKey]}
+    if(Array.isArray(s.history))history=s.history.filter(x=>x&&Array.isArray(x.d)&&x.d.length===3).slice(0,12);
+    if(s.last&&typeof s.last==="object")last=Object.fromEntries(Object.entries(s.last).filter(([k,v])=>Number.isFinite(v)&&v>0));
+    renderHist();
+  }catch(e){}
+}
+load();
+initDice();
+if(history[0])showDice(history[0].d);
+build();
+// 別タブ・別ページでチップが変わったら反映(ベット中は上書きしない)
+Wallet.on(s=>{if(busy||total(bets)>0)return;balance=s.balance;net=s.net;rounds=s.rounds;paint()});
+</script>
+</body>
+</html>
